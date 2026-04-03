@@ -1,0 +1,18 @@
+appId: com.recdesk.app
+productName: RecDesk
+directories:
+  output: dist
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - node_modules/ffmpeg-static/**/*
+win:
+  executableName: RecDesk
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
