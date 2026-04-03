@@ -55,6 +55,8 @@ npm run build
 npm run build:win
 ```
 
+> 打包过程需要下载 Electron 和依赖，建议开启全局代理以加速下载。
+
 打包输出位于 `dist/win-unpacked/` 目录。
 
 ### 预览构建结果

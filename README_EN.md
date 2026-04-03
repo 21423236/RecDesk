@@ -55,6 +55,8 @@ npm run build
 npm run build:win
 ```
 
+> The build process downloads Electron and dependencies. Using a global proxy is recommended to speed up downloads.
+
 Output located in `dist/win-unpacked/` directory.
 
 ### Preview Build
