@@ -739,7 +739,8 @@ app.whenReady().then(async () => {
         thumbnailSize: { width: 0, height: 0 }
       })
 
-      const primarySource = sources[0]
+      const screenSources = sources.filter(s => s.id.startsWith('screen:'))
+      const primarySource = screenSources[0] || sources[0]
 
       if (!primarySource) {
         callback({})
