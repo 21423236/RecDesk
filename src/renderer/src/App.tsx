@@ -531,6 +531,7 @@ function App() {
     setStatus('recording')
 
     await window.recorderApi.showRecordingIndicator()
+    await window.recorderApi.windowControl.minimize()
 
     lastFlushTimeRef.current = Date.now()
     flushTimerRef.current = window.setInterval(() => {
@@ -582,6 +583,7 @@ function App() {
     setStatus('recording')
 
     await window.recorderApi.showRecordingIndicator()
+    await window.recorderApi.windowControl.minimize()
 
     lastFlushTimeRef.current = Date.now()
     flushTimerRef.current = window.setInterval(() => {

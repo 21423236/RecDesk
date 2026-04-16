@@ -117,6 +117,11 @@ const recorderApi = {
   },
   getDisplays: (): Promise<DisplayInfo[]> => {
     return ipcRenderer.invoke('screen:get-displays') as Promise<DisplayInfo[]>
+  },
+  windowControl: {
+    minimize: (): Promise<void> => {
+      return ipcRenderer.invoke('window:minimize') as Promise<void>
+    }
   }
 }
 

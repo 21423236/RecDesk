@@ -731,6 +731,10 @@ ipcMain.handle('recording-indicator:hide', async () => {
   closeRecordingIndicatorWindow()
 })
 
+ipcMain.handle('window:minimize', async () => {
+  mainWindow?.minimize()
+})
+
 app.whenReady().then(async () => {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
