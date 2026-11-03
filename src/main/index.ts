@@ -731,6 +731,10 @@ ipcMain.handle('recording-indicator:hide', async () => {
   closeRecordingIndicatorWindow()
 })
 
+ipcMain.handle('window:minimize', async () => {
+  mainWindow?.minimize()
+})
+
 app.whenReady().then(async () => {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
@@ -739,7 +743,8 @@ app.whenReady().then(async () => {
         thumbnailSize: { width: 0, height: 0 }
       })
 
-      const primarySource = sources[0]
+      const screenSources = sources.filter(s => s.id.startsWith('screen:'))
+      const primarySource = screenSources[0] || sources[0]
 
       if (!primarySource) {
         callback({})

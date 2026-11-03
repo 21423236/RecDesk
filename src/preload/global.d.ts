@@ -82,6 +82,9 @@ declare global {
       showRecordingIndicator: () => Promise<void>
       hideRecordingIndicator: () => Promise<void>
       getDisplays: () => Promise<DisplayInfo[]>
+      windowControl: {
+        minimize: () => Promise<void>
+      }
     }
   }
 }
