@@ -1,6 +1,21 @@
 # RecDesk
 
-一款基于 Electron 的桌面屏幕录制应用，支持全屏录制和区域选择录制，输出 MP4 格式视频文件。
+Windows 桌面录屏软件，支持全屏、区域选择、系统声音、麦克风和 MP4 输出。
+
+## C++ 原生版（新增）
+
+针对录制无法启动、长时间录制卡住及导出失败，新增独立的 **C++20 / Win32 / WASAPI + FFmpeg** 实现，位于 [`native/`](native/README.md)。录制时实时编码到 MKV，停止后流复制封装 MP4；失败保留源文件，不需要 Electron / Node.js / Qt。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1
+native\release\RecDesk.exe
+```
+
+需要 Visual Studio C++ 桌面开发工具、Windows SDK、CMake 和带有 gdigrab / libx264 / aac 的 FFmpeg。详细构建、恢复和测试说明见 [原生版文档](native/README.md)。原 Electron 项目完整保留，以下内容描述旧版。
+
+## Electron 旧版
+
+基于 Electron 的桌面屏幕录制应用，支持全屏录制和区域选择录制，输出 MP4 格式视频文件。
 
 ![应用截图](screenshots.png)
 

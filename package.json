@@ -9,7 +9,9 @@
     "build": "electron-vite build",
     "build:win": "npm run build && electron-builder --win nsis",
     "preview": "electron-vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build.ps1",
+    "test:native": "powershell -NoProfile -ExecutionPolicy Bypass -File native/build.ps1 -TestOnly"
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",

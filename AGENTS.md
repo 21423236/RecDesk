@@ -3,6 +3,7 @@
 Repository guidance for coding agents working in this project.
 
 ## Overview
+- Native C++ migration: `native/` is a separate Windows C++20 / Win32 / WASAPI + FFmpeg project. See `native/README.md` for architecture and recovery guarantees. Keep the legacy Electron app intact unless explicitly asked otherwise.
 - App: RecDesk - Electron desktop screen recorder.
 - Stack: Electron + electron-vite + React 19 + TypeScript.
 - Package manager: npm (`package-lock.json`).
@@ -61,12 +62,28 @@ Runs `tsc --noEmit`.
 Do not invent `npm run lint` or `npm run format` unless you add and document them.
 
 ### Tests
-- No test script exists in `package.json`.
-- No test framework config exists in the repo root.
-- No project test files are checked in.
+- No Electron test script exists in `package.json`; Electron still has no test runner.
+- Native C++ tests are in `native/tests/` and registered through CTest.
+
+### Native C++ Build / Tests
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1
+ctest --test-dir native/build -C Release --output-on-failure
+ctest --test-dir native/build -C Release -R '^recdesk_core$' --output-on-failure
+ctest --test-dir native/build -C Release -R '^recdesk_export$' --output-on-failure
+ctest --test-dir native/build -C Release -R '^recdesk_ui$' --output-on-failure
+```
+- Requirements: Visual Studio C++ desktop workload, Windows SDK, CMake, FFmpeg with gdigrab/libx264/aac.
+- Native build output: `native/release/RecDesk.exe` with `ffmpeg.exe` beside it.
+- Optional npm entry points: `npm run build:native` builds/tests/packages; `npm run test:native` runs native tests after a build. Original npm dev/build commands still target Electron.
+- Core / synthetic export tests never capture the screen or microphone. `recdesk_smoke.exe` is an opt-in live desktop/device test; only run it with an explicit output path and non-sensitive screen content.
+- Native UI tests briefly open settings without recording. Default settings must use WDA_NONE, not WDA_EXCLUDEFROMCAPTURE; otherwise remote/screen-sharing users may see no parameters. Capture exclusion is opt-in during recording with `--exclude-controls`.
+- Native code uses C++20 and Win32 Unicode APIs; do not introduce Qt or Electron dependencies to it.
+- Preserve bounded audio buffers, background progress draining, graceful stop deadlines, atomic final export, and source retention on failure/cancellation.
+- Do not name local headers `process.h`: it shadows MSVC's CRT header used by `<thread>`.
 
 ### Running a Single Test
-There is no supported single-test command yet because the repository has no test runner.
+Electron has no supported single-test command. For native C++, use the CTest `-R` commands above.
 
 If you add a test framework, update this file with:
 1. the main test command,
@@ -158,13 +175,13 @@ This file is the primary agent guidance document for the repo.
 - When changing an IPC contract, update all affected layers together.
 - Run `npm run typecheck` after TypeScript changes.
 - Run `npm run build` when changing bundling, entry points, or preload wiring.
-- Do not claim tests passed; there are currently no repo tests.
+- Do not claim Electron tests passed; there are no Electron tests. For native changes, run CTest and report any skipped tests honestly.
 - If you add linting, formatting, or testing, update `package.json` scripts and this file in the same change.
 
 ## Known Gaps
 - No lint setup.
 - No formatter setup.
-- No automated tests.
+- No automated Electron tests; native C++ core and synthetic export tests use CTest.
 - `App.tsx` is already large, so feature work should avoid making it harder to navigate.
 
 If you introduce any of those systems, update this document immediately so the next agent has accurate instructions.

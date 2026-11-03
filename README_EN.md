@@ -1,5 +1,14 @@
 # RecDesk
 
+## Native C++ version
+
+A separate Windows C++20 / Win32 / WASAPI implementation now lives in `native/`.
+It encodes H.264/AAC to a recoverable MKV while recording, then remuxes to MP4 without video re-encoding.
+Failed or cancelled exports preserve the recording source. No Electron, Node.js, or Qt runtime is required.
+
+Build from the repository root with `powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1`, then run `native\release\RecDesk.exe`.
+See `native/README.md` for requirements, recovery, tests, and current limitations. The original Electron application is preserved; the documentation below describes that version.
+
 A desktop screen recording application built with Electron. Supports full-screen and region selection recording, exports MP4 video files.
 
 ![Screenshot](screenshots.png)
