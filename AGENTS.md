@@ -70,6 +70,7 @@ Do not invent `npm run lint` or `npm run format` unless you add and document the
 powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1
 ctest --test-dir native/build -C Release --output-on-failure
 ctest --test-dir native/build -C Release -R '^recdesk_core$' --output-on-failure
+ctest --test-dir native/build -C Release -R '^recdesk_audio$' --output-on-failure
 ctest --test-dir native/build -C Release -R '^recdesk_export$' --output-on-failure
 ctest --test-dir native/build -C Release -R '^recdesk_ui$' --output-on-failure
 ```
@@ -80,6 +81,8 @@ ctest --test-dir native/build -C Release -R '^recdesk_ui$' --output-on-failure
 - Native UI tests briefly open settings without recording. Default settings must use WDA_NONE, not WDA_EXCLUDEFROMCAPTURE; otherwise remote/screen-sharing users may see no parameters. Capture exclusion is opt-in during recording with `--exclude-controls`.
 - Native code uses C++20 and Win32 Unicode APIs; do not introduce Qt or Electron dependencies to it.
 - Preserve bounded audio buffers, background progress draining, graceful stop deadlines, atomic final export, and source retention on failure/cancellation.
+- Audio processing lives in `native/src/audio_processing.*`. Preserve interpolation phase across packets and source-specific overwrite/deduplication; never independently ceil packet ends and add repeated samples from the same source. Synthetic audio tests do not open audio devices.
+- Single audio case: `native\build\Release\recdesk_audio_tests.exe --case boundaries` (also timeline/resampling/mixing/discontinuities/clocks/offsets). This exercises the same processing code as WASAPI capture, without recording the user.
 - Do not name local headers `process.h`: it shadows MSVC's CRT header used by `<thread>`.
 
 ### Running a Single Test
@@ -181,7 +184,7 @@ This file is the primary agent guidance document for the repo.
 ## Known Gaps
 - No lint setup.
 - No formatter setup.
-- No automated Electron tests; native C++ core and synthetic export tests use CTest.
+- No automated Electron tests; native C++ core, synthetic audio, synthetic export and UI tests use CTest.
 - `App.tsx` is already large, so feature work should avoid making it harder to navigate.
 
 If you introduce any of those systems, update this document immediately so the next agent has accurate instructions.

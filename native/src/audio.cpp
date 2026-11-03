@@ -1,47 +1,20 @@
 #include "audio.h"
+#include "audio_processing.h"
 
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <ks.h>
 #include <ksmedia.h>
 #include <wrl/client.h>
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <memory>
 
 using Microsoft::WRL::ComPtr;
 
 namespace recdesk {
 namespace {
-
-constexpr std::int64_t sampleRate = 48000;
-constexpr std::int64_t ringFrames = sampleRate * 2;
-
-class Timeline {
-public:
-  Timeline() : samples_(static_cast<size_t>(ringFrames) * 2), tags_(static_cast<size_t>(ringFrames), -1) {}
-  void add(std::int64_t frame, float left, float right, std::int64_t consumed) {
-    if (frame < consumed || frame >= consumed + ringFrames) return;
-    auto slot = static_cast<size_t>(frame % ringFrames);
-    if (tags_[slot] != frame) { tags_[slot] = frame; samples_[slot * 2] = 0; samples_[slot * 2 + 1] = 0; }
-    samples_[slot * 2] += left;
-    samples_[slot * 2 + 1] += right;
-  }
-  void read(std::int64_t frame, float* output, size_t count, float gain) const {
-    for (size_t i = 0; i < count; ++i) {
-      auto position = frame + static_cast<std::int64_t>(i);
-      auto slot = static_cast<size_t>(position % ringFrames);
-      for (size_t channel = 0; channel < 2; ++channel)
-        output[i * 2 + channel] = tags_[slot] == position ? std::clamp(samples_[slot * 2 + channel] * gain, -1.0f, 1.0f) : 0.0f;
-    }
-  }
-private:
-  std::vector<float> samples_;
-  std::vector<std::int64_t> tags_;
-};
 
 class Source {
 public:
@@ -66,16 +39,22 @@ public:
       else if (IsEqualGUID(extended->SubFormat, KSDATAFORMAT_SUBTYPE_PCM)) tag = WAVE_FORMAT_PCM;
     }
     floating_ = tag == WAVE_FORMAT_IEEE_FLOAT;
-    if (!rate_ || !channels_ || channels_ > 32 || block_ != channels_ * (bits_ / 8) ||
+    if (!rate_ || rate_ > 768000 || !channels_ || channels_ > 32 || block_ != channels_ * (bits_ / 8) ||
         !((floating_ && bits_ == 32) || (tag == WAVE_FORMAT_PCM && (bits_ == 16 || bits_ == 24 || bits_ == 32))))
       throw std::runtime_error("音频设备格式不受支持，请将设备格式设为 PCM 16/24/32 位或浮点 32 位");
     checkHr(client_->Initialize(AUDCLNT_SHAREMODE_SHARED, loopback ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0,
       1000000, 0, raw, nullptr), "无法初始化音频录制（设备可能被独占）");
     checkHr(client_->GetService(IID_PPV_ARGS(&capture_)), "无法创建音频捕获服务");
+    UINT32 capacity = 0;
+    checkHr(client_->GetBufferSize(&capacity), "无法读取音频缓冲区大小");
+    if (!capacity || capacity > static_cast<std::uint64_t>(rate_) * 2)
+      throw std::runtime_error("音频设备缓冲区大小不受支持");
+    decoded_.resize(capacity);
+    resampler_ = std::make_unique<AudioResampler>(rate_);
   }
   ~Source() { if (started_) client_->Stop(); }
   void start() { checkHr(client_->Start(), "无法开始捕获音频"); started_ = true; }
-  void drain(Timeline& timeline, std::int64_t epoch, std::int64_t consumed) {
+  void drain(AudioTimeline& timeline, std::size_t source, std::int64_t epoch, std::int64_t consumed) {
     UINT32 packet = 0;
     checkHr(capture_->GetNextPacketSize(&packet), "音频设备已断开");
     int packets = 0;
@@ -84,29 +63,29 @@ public:
       BYTE* data = nullptr;
       UINT32 frames = 0;
       DWORD flags = 0;
-      UINT64 qpc = 0;
-      checkHr(capture_->GetBuffer(&data, &frames, &flags, nullptr, &qpc), "无法读取音频数据");
-      if (!frames) {
-        checkHr(capture_->ReleaseBuffer(0), "无法释放空音频缓冲区");
-        break;
-      }
+      UINT64 devicePosition = 0, qpc = 0;
+      checkHr(capture_->GetBuffer(&data, &frames, &flags, &devicePosition, &qpc), "无法读取音频数据");
+      if (!frames) break;
+      struct BufferRelease {
+        IAudioCaptureClient* capture;
+        UINT32 frames;
+        ~BufferRelease() { if (frames) capture->ReleaseBuffer(frames); }
+        void finish() {
+          auto count = frames;
+          frames = 0;
+          checkHr(capture->ReleaseBuffer(count), "无法释放音频缓冲区");
+        }
+      } release{capture_.Get(), frames};
+      if (frames > decoded_.size()) throw std::runtime_error("音频包超过设备缓冲区大小");
       // Timestamps are in the same QPC 100-ns domain as the recording timeline.
       std::int64_t startTime = static_cast<std::int64_t>(qpc);
-      if ((flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) || !qpc)
+      bool validTimestamp = !(flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) && qpc != 0;
+      if (!validTimestamp)
         startTime = clock100ns() - static_cast<std::int64_t>(frames) * 10000000 / rate_;
-      auto first = static_cast<std::int64_t>(std::ceil(static_cast<double>(startTime - epoch) * sampleRate / 10000000.0));
-      auto last = static_cast<std::int64_t>(std::ceil((static_cast<double>(startTime - epoch) / 10000000.0 +
-        static_cast<double>(frames) / rate_) * sampleRate));
-      for (auto frame = std::max(first, consumed); frame < std::min(last, consumed + ringFrames); ++frame) {
-        double sourcePosition = (static_cast<double>(frame) / sampleRate - static_cast<double>(startTime - epoch) / 10000000.0) * rate_;
-        auto index = static_cast<UINT32>(std::clamp(sourcePosition, 0.0, static_cast<double>(frames - 1)));
-        float fraction = static_cast<float>(std::clamp(sourcePosition - index, 0.0, 1.0));
-        auto next = std::min(index + 1, frames - 1);
+      for (UINT32 frame = 0; frame < frames; ++frame) {
         auto channelValue = [&](WORD channel) {
           if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) || !data) return 0.0f;
-          float a = sample(data + index * block_, channel);
-          float b = sample(data + next * block_, channel);
-          return a + (b - a) * fraction;
+          return sample(data + frame * block_, channel);
         };
         float left = channelValue(0);
         float right = channelValue(channels_ == 1 ? 0 : 1);
@@ -118,9 +97,13 @@ public:
           left = left * 0.7f + extra;
           right = right * 0.7f + extra;
         }
-        timeline.add(frame, left, right, consumed);
+        decoded_[frame] = {left, right};
       }
-      checkHr(capture_->ReleaseBuffer(frames), "无法释放音频缓冲区");
+      // Release the WASAPI packet before interpolation/mixing, even if either throws.
+      release.finish();
+      resampler_->append(std::span<const StereoFrame>(decoded_.data(), frames),
+        {devicePosition, startTime - epoch, validTimestamp, (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0},
+        timeline, source, consumed);
       checkHr(capture_->GetNextPacketSize(&packet), "音频设备已断开");
     }
   }
@@ -138,6 +121,8 @@ private:
   }
   ComPtr<IAudioClient> client_;
   ComPtr<IAudioCaptureClient> capture_;
+  std::vector<StereoFrame> decoded_;
+  std::unique_ptr<AudioResampler> resampler_;
   DWORD rate_ = 0;
   WORD channels_ = 0, bits_ = 0, block_ = 0;
   bool floating_ = false, started_ = false;
@@ -225,7 +210,7 @@ void AudioPipe::run(std::promise<void> ready) {
     std::vector<std::unique_ptr<Source>> sources;
     if (systemAudio_) sources.push_back(std::make_unique<Source>(true));
     if (microphone_) sources.push_back(std::make_unique<Source>(false));
-    Timeline timeline;
+    AudioTimeline timeline(sources.size());
     ready.set_value();
     initialized = true;
     if (!connect()) return;
@@ -235,11 +220,11 @@ void AudioPipe::run(std::promise<void> ready) {
     std::int64_t emitted = 0;
     std::array<float, 960> samples{};
     while (WaitForSingleObject(stopEvent_.get(), 5) == WAIT_TIMEOUT) {
-      for (auto& source : sources) source->drain(timeline, epoch, emitted);
-      auto due = (clock100ns() - epoch - 1000000) * sampleRate / 10000000;
-      if (due - emitted > sampleRate) throw std::runtime_error("音频编码积压超过 1 秒，已停止录制以防止内存持续增长");
+      for (std::size_t i = 0; i < sources.size(); ++i) sources[i]->drain(timeline, i, epoch, emitted);
+      auto due = (clock100ns() - epoch - 1000000) * audioSampleRate / 10000000;
+      if (due - emitted > audioSampleRate) throw std::runtime_error("音频编码积压超过 1 秒，已停止录制以防止内存持续增长");
       while (emitted + 480 <= due) {
-        timeline.read(emitted, samples.data(), 480, sources.size() > 1 ? 0.5f : 1.0f);
+        timeline.read(emitted, samples);
         if (!write(samples.data(), static_cast<DWORD>(sizeof(samples)))) return;
         emitted += 480;
       }

@@ -25,7 +25,7 @@
 
 - 不再经过浏览器 `MediaRecorder`、Canvas 绘制循环和大块 IPC 传输。
 - **录制时完成视频编码**；原生录制导出使用 `-c copy`，不重新编码整段视频。
-- 音频使用固定 2 秒时间线、10 ms 输出块和有限管道；按 QPC 时间戳放置音频，静音期间持续输出静音，避免等待音频导致画面无法启动。
+- 每路音频使用固定 2 秒时间线、10 ms 输出块和有限管道；以 QPC 对齐起点，按设备帧位置连续重采样并缓慢校正时钟偏差。插值相位和上一采样点跨包保留，不对每个包单独取整起止边界。同一路重复数据覆盖 / 去重，只有不同来源才混音，防止包边界叠加产生爆音。静音期间持续输出静音，避免等待音频导致画面无法启动。
 - FFmpeg 视频 / 音频输入队列、诊断缓存及日志文件均有限制。编码积压或设备断开会停止并提示，不无限堆积数据。
 - 日志和进度持续被后台线程读取，录制和导出不会阻塞界面消息循环。
 - 录制 30 秒无输出、停止 15 秒未退出、导出 60 秒无进展时终止等待并保留源文件。上述是**无进展超时**，不是录制时长限制。
@@ -34,6 +34,12 @@
 - 不启用 `+faststart`，避免长视频在导出结尾再次整体搬移文件；本地播放不受影响，如需网页渐进播放可后续单独处理。
 
 > C++ 本身不保证不丢帧。当前视频后端是兼容性优先的 **GDI / CPU x264**，不是 DXGI / GPU 硬编码。在 4K / 60 FPS、高负载或慢磁盘环境下应降低分辨率 / 帧率。当前不提供实时预览、暂停续录、按应用采音或运行中切换音频设备。
+
+### 麦克风一说话就刺啦 / 破音
+
+2026-11-03 修正了旧版逐包时间戳取整造成的重复采样风险，以及同一路采样在混音时间线上被重复累加的问题。这类尖峰在静音时不明显，有人声时可能成为爆音。更新后请退出旧进程，再运行 `native/release/RecDesk.exe`，先关闭系统声音、只开启麦克风试录。
+
+此修复不是降噪 / 回声消除，也不能恢复在麦克风或驱动端已经削波的人声。若仍破音，请戴耳机并用 Windows 录音机录制相同声音作对比：两边都破音时检查输入音量和麦克风增强；只有本软件异常时，应继续排查软件并保留一段不含隐私的短样本。尚未通过用户的实际麦克风复测确认这次报告的全部原因。
 
 ## 文件安全与恢复
 
@@ -86,6 +92,7 @@ cmake --install native/build --config Release --prefix native/release
 ## 验证
 
 - 核心测试：Windows 参数引用、多屏负坐标、偶数尺寸、长时长格式、命令策略、进度解析、正常停止、强制停止。
+- 音频回归测试 `recdesk_audio`：使用纯合成采样，不访问麦克风 / 扬声器。覆盖旧边界取整重叠的复现、60 秒无幅度尖峰、16 / 32 / 44.1 / 48 / 96 / 192 kHz 跨包插值、44.1 kHz 麦克风与 48 kHz 系统音混合、重复 / 丢失音频包、时间戳异常、模拟两分钟时钟漂移与抖动、八小时起点的数值精度。
 - 导出集成测试：只生成合成媒体，不录制桌面 / 麦克风；检查 MP4 完整解码、中文 / 空格路径、失败与取消时保留源文件和已有输出、拒绝覆盖源文件、清理临时 MP4。找不到 FFmpeg 时该组会明确跳过。
 - 界面回归测试：短暂打开设置窗口，不录屏或录音，检查默认参数控件可见、未启用屏幕采集排除、启动器要求隐藏时仍显示、窗口移出屏幕 / 最小化后重复启动可恢复；当前桌面已有运行实例时明确跳过该组。
 - 真正的桌面 / 设备测试为**手动执行**，需要交互桌面、默认音频设备及麦克风权限：
@@ -99,8 +106,12 @@ native\build\Release\recdesk_smoke.exe --recover C:\path\recording.mkv --output 
 
 # 单个测试组
 ctest --test-dir native/build -C Release -R '^recdesk_core$' --output-on-failure
+ctest --test-dir native/build -C Release -R '^recdesk_audio$' --output-on-failure
 ctest --test-dir native/build -C Release -R '^recdesk_export$' --output-on-failure
 ctest --test-dir native/build -C Release -R '^recdesk_ui$' --output-on-failure
+
+# 单个音频测试用例（还可选 timeline / resampling / mixing / discontinuities / clocks / offsets）
+native\build\Release\recdesk_audio_tests.exe --case boundaries
 ```
 
 `--audio` 支持 `none` / `system` / `mic` / `both`。自动化测试不能代替数小时录制、多显卡、多 DPI、睡眠唤醒和异常断电测试。
@@ -115,12 +126,13 @@ native/
   src/main.cpp                    中文 Win32 主界面、悬浮窗、快捷键
   src/region_selector.*           物理像素桌面框选
   src/recorder.*                  会话状态、磁盘检查、恢复和安全导出
-  src/audio.*                     WASAPI 捕获、定长混音时间线、可取消音频管道
+  src/audio.*                     WASAPI 捕获、PCM 解码、可取消音频管道
+  src/audio_processing.*          跨包连续插值、时钟校正、每来源定长混音时间线
   src/encoder_process.h           编码子进程接口（避免与 CRT process.h 重名）
   src/process.cpp                 Job Object、受限句柄继承、进度和日志读取
   src/platform.*                  Windows / COM / 路径 / 显示器辅助函数
   resources/app.manifest          DPI、长路径及普通用户权限
-  tests/                          核心测试、合成媒体导出测试、手动桌面测试程序
+  tests/                          核心 / 音频 / 导出 / 界面测试、手动桌面测试程序
 ```
 
 许可证和 FFmpeg 分发注意事项见 `THIRD_PARTY_NOTICES.md`。

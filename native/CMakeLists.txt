@@ -14,6 +14,7 @@ add_library(recdesk_core
   src/platform.cpp
   src/process.cpp
   src/audio.cpp
+  src/audio_processing.cpp
   src/recorder.cpp
 )
 target_include_directories(recdesk_core PUBLIC src)
@@ -40,6 +41,10 @@ if(BUILD_TESTING)
   add_executable(recdesk_tests tests/core_tests.cpp)
   target_link_libraries(recdesk_tests PRIVATE recdesk_core)
   add_test(NAME recdesk_core COMMAND recdesk_tests)
+  add_executable(recdesk_audio_tests tests/audio_tests.cpp)
+  target_link_libraries(recdesk_audio_tests PRIVATE recdesk_core)
+  add_test(NAME recdesk_audio COMMAND recdesk_audio_tests)
+  set_tests_properties(recdesk_audio PROPERTIES TIMEOUT 60)
   add_executable(recdesk_export_tests tests/export_tests.cpp)
   target_link_libraries(recdesk_export_tests PRIVATE recdesk_core)
   add_test(NAME recdesk_export COMMAND recdesk_export_tests)
